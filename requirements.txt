@@ -1,0 +1,23 @@
+# Garmin数据同步工具依赖包
+
+# MongoDB驱动
+pymongo>=4.6.0
+
+# Garmin Connect API客户端
+garth>=0.5.17
+
+# 数据处理
+python-dateutil>=2.9.0
+
+# 进度条显示
+tqdm>=4.66.5
+
+# FIT文件处理（可选，如果需要处理FIT文件）
+fitfile>=1.1.10
+
+# 配置文件处理
+# json是标准库，不需要额外安装
+
+# 日志
+# logging是标准库，不需要额外安装
+

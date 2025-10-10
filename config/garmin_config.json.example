@@ -1,0 +1,55 @@
+{
+    "mongodb": {
+        "host": "localhost",
+        "port": 27017,
+        "database": "garmin_health",
+        "username": "",
+        "password": "",
+        "auth_source": "admin"
+    },
+    "garmin": {
+        "domain": "garmin.com"
+    },
+    "credentials": {
+        "user": "",
+        "password": "",
+        "secure_password": false,
+        "password_file": null
+    },
+    "data": {
+        "weight_start_date": "2020-01-01",
+        "sleep_start_date": "2020-01-01",
+        "rhr_start_date": "2020-01-01",
+        "monitoring_start_date": "2020-01-01",
+        "download_latest_activities": 25,
+        "download_all_activities": 1000
+    },
+    "directories": {
+        "relative_to_home": false,
+        "base_dir": "mydata",
+        "fit_files_dir": "mydata/fit",
+        "activities_dir": "mydata/activities",
+        "monitoring_dir": "mydata/monitoring",
+        "sleep_dir": "mydata/sleep",
+        "weight_dir": "mydata/weight",
+        "rhr_dir": "mydata/rhr"
+    },
+    "enabled_stats": {
+        "monitoring": true,
+        "steps": true,
+        "itime": true,
+        "sleep": true,
+        "rhr": true,
+        "weight": true,
+        "activities": true
+    },
+    "settings": {
+        "metric": true,
+        "default_display_activities": ["walking", "running", "cycling"],
+        "log_level": "INFO"
+    },
+    "checkup": {
+        "look_back_days": 90
+    }
+}
+
