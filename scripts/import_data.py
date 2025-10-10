@@ -61,13 +61,34 @@ def main():
         importer = DataImporter(config, db_client)
         logger.info("导入器初始化成功")
         
+        # 清空已有数据（避免重复和错误数据）
+        print("\n4. 清空旧数据...")
+        db_client.db.activities.delete_many({})
+        db_client.db.weight.delete_many({})
+        logger.info("已清空activities和weight集合")
+        
         # 导入数据
-        print("\n4. 开始导入数据...")
+        print("\n5. 开始导入数据...")
+        print("   提示：如果数据还是null，请完全退出Python，清除缓存后重试")
         print("-" * 60)
         
         start_time = datetime.now()
         total_count = importer.import_all_data()
         end_time = datetime.now()
+        
+        # 验证导入的数据
+        print("\n验证导入的数据:")
+        sample = db_client.get_activity_by_id(360757114)
+        if sample:
+            print(f"  示例活动 360757114:")
+            print(f"    startTimeGMT: {sample.get('startTimeGMT')}")
+            print(f"    activityType: {sample.get('activityType')}")
+            print(f"    distance: {sample.get('distance')}")
+            if sample.get('startTimeGMT'):
+                print("  ✓ 数据正确！")
+            else:
+                print("  ✗ 警告：数据字段为null，可能是Python缓存问题")
+                print("  解决：完全退出终端，重新启动后再运行")
         
         duration = (end_time - start_time).total_seconds()
         

@@ -14,6 +14,12 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
+# 清除模块缓存（避免使用旧版本）
+import sys
+if 'db.models' in sys.modules:
+    del sys.modules['db.models']
+
+
 class DataImporter:
     """数据导入器"""
 
@@ -66,7 +72,7 @@ class DataImporter:
         for filepath in tqdm(json_files, desc="导入每日汇总"):
             data = self._load_json_file(filepath)
             if data:
-                from ..db.models import DailySummaryData
+                from db.models import DailySummaryData
                 summary = DailySummaryData.from_json_data(data)
                 if self.db.insert_daily_summary(summary):
                     count += 1
@@ -89,7 +95,7 @@ class DataImporter:
         for filepath in tqdm(json_files, desc="导入睡眠数据"):
             data = self._load_json_file(filepath)
             if data:
-                from ..db.models import SleepData
+                from db.models import SleepData
                 sleep = SleepData.from_json_data(data)
                 if self.db.insert_sleep_data(sleep):
                     count += 1
@@ -108,24 +114,31 @@ class DataImporter:
             logger.warning("没有找到体重数据文件")
             return 0
         
-        # 过滤掉范围文件，只导入单日文件
-        daily_files = [f for f in json_files if '_to_' not in f]
-        
         count = 0
-        for filepath in tqdm(daily_files, desc="导入体重数据"):
+        from db.models import WeightData
+        
+        for filepath in tqdm(json_files, desc="导入体重数据"):
             data = self._load_json_file(filepath)
-            if data:
-                from ..db.models import WeightData
-                # 如果是数组，遍历每个条目
-                if isinstance(data, list):
-                    for entry in data:
-                        weight = WeightData.from_json_data(entry)
-                        if self.db.insert_weight_data(weight):
-                            count += 1
-                else:
-                    weight = WeightData.from_json_data(data)
+            if not data:
+                continue
+            
+            # 处理范围文件（包含dateWeightList）
+            if isinstance(data, dict) and 'dateWeightList' in data:
+                for entry in data['dateWeightList']:
+                    weight = WeightData.from_json_data(entry)
                     if self.db.insert_weight_data(weight):
                         count += 1
+            # 处理数组格式
+            elif isinstance(data, list):
+                for entry in data:
+                    weight = WeightData.from_json_data(entry)
+                    if self.db.insert_weight_data(weight):
+                        count += 1
+            # 处理单个记录
+            else:
+                weight = WeightData.from_json_data(data)
+                if self.db.insert_weight_data(weight):
+                    count += 1
         
         logger.info(f"成功导入 {count} 条体重数据")
         return count
@@ -147,7 +160,7 @@ class DataImporter:
             if data and isinstance(data, dict):
                 # 检查是否有静息心率数据
                 if 'restingHeartRate' in data and data['restingHeartRate']:
-                    from ..db.models import RestingHeartRateData
+                    from db.models import RestingHeartRateData
                     rhr = RestingHeartRateData.from_json_data(data)
                     if self.db.insert_rhr_data(rhr):
                         count += 1
@@ -182,8 +195,55 @@ class DataImporter:
         for activity_id, filepath in tqdm(activity_files.items(), desc="导入活动"):
             data = self._load_json_file(filepath)
             if data:
-                from ..db.models import ActivityData
-                activity = ActivityData.from_json_data(data)
+                # 判断是summary还是details文件
+                is_details = 'summaryDTO' in data
+                
+                if is_details:
+                    # details文件：数据在summaryDTO中
+                    summary = data.get('summaryDTO', {})
+                    activity_type_obj = data.get('activityTypeDTO', {})
+                else:
+                    # summary文件：数据在根级别
+                    summary = data
+                    activity_type_obj = data.get('activityType', {})
+                
+                # 提取activityType
+                activity_type = activity_type_obj.get('typeKey') if isinstance(activity_type_obj, dict) else activity_type_obj
+                
+                activity = {
+                    'activityId': data.get('activityId'),
+                    'activityName': data.get('activityName'),
+                    'activityType': activity_type,
+                    'activityTypeDisplay': activity_type,
+                    'startTimeGMT': summary.get('startTimeGMT'),
+                    'startTimeLocal': summary.get('startTimeLocal'),
+                    'duration': summary.get('duration'),
+                    'distance': summary.get('distance'),
+                    'averageSpeed': summary.get('averageSpeed'),
+                    'maxSpeed': summary.get('maxSpeed'),
+                    'calories': summary.get('calories'),
+                    'averageHR': summary.get('averageHR'),
+                    'maxHR': summary.get('maxHR'),
+                    'elevationGain': summary.get('elevationGain'),
+                    'elevationLoss': summary.get('elevationLoss'),
+                    'averageTemperature': summary.get('averageTemperature'),
+                    'steps': summary.get('steps'),
+                    'averageCadence': summary.get('averageRunningCadenceInStepsPerMinute') or summary.get('averageSwimCadence'),
+                    'maxCadence': summary.get('maxRunningCadenceInStepsPerMinute'),
+                    'strideLength': summary.get('strideLength'),
+                    'vO2Max': summary.get('vO2MaxValue'),
+                    'trainingEffect': summary.get('trainingEffect') or summary.get('aerobicTrainingEffect'),
+                    'anaerobicTrainingEffect': summary.get('anaerobicTrainingEffect'),
+                    'locationName': data.get('locationName'),
+                    'startLatitude': data.get('startLatitude'),
+                    'startLongitude': data.get('startLongitude'),
+                    'endLatitude': data.get('endLatitude'),
+                    'endLongitude': data.get('endLongitude'),
+                    'deviceName': data.get('deviceName'),
+                    'raw_data': data,
+                    'created_at': datetime.utcnow()
+                }
+                
                 if self.db.insert_activity_data(activity):
                     count += 1
         
@@ -191,28 +251,30 @@ class DataImporter:
         return count
 
     def import_all_data(self):
-        """导入所有数据"""
+        """导入所有数据（中国区主要是活动数据）"""
         logger.info("=" * 50)
         logger.info("开始导入数据到MongoDB")
         logger.info("=" * 50)
         
         total_count = 0
         
-        # 导入各类数据
-        if self.config.is_stat_enabled('monitoring'):
-            total_count += self.import_daily_summaries()
+        # 导入活动数据（中国区主要功能）
+        if self.config.is_stat_enabled('activities'):
+            logger.info("导入活动数据（中国区主要功能）...")
+            total_count += self.import_activities()
         
-        if self.config.is_stat_enabled('sleep'):
-            total_count += self.import_sleep_data()
-        
+        # 导入体重数据（如果有）
         if self.config.is_stat_enabled('weight'):
+            logger.info("导入体重数据...")
             total_count += self.import_weight_data()
         
-        if self.config.is_stat_enabled('rhr'):
-            total_count += self.import_rhr_data()
-        
-        if self.config.is_stat_enabled('activities'):
-            total_count += self.import_activities()
+        # 以下功能在中国区不可用（API返回403）
+        # if self.config.is_stat_enabled('monitoring'):
+        #     total_count += self.import_daily_summaries()
+        # if self.config.is_stat_enabled('sleep'):
+        #     total_count += self.import_sleep_data()
+        # if self.config.is_stat_enabled('rhr'):
+        #     total_count += self.import_rhr_data()
         
         logger.info("=" * 50)
         logger.info(f"数据导入完成，共导入 {total_count} 条数据")
@@ -221,8 +283,8 @@ class DataImporter:
         # 显示统计信息
         stats = self.db.get_stats()
         logger.info("\n数据库统计:")
-        for key, value in stats.items():
-            logger.info(f"  {key}: {value}")
+        logger.info(f"  活动数据: {stats['activities_count']}")
+        logger.info(f"  体重数据: {stats['weight_count']}")
         
         return total_count
 

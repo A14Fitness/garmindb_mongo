@@ -8,7 +8,7 @@
         "auth_source": "admin"
     },
     "garmin": {
-        "domain": "garmin.com"
+        "domain": "garmin.cn"
     },
     "credentials": {
         "user": "",
@@ -18,9 +18,6 @@
     },
     "data": {
         "weight_start_date": "2020-01-01",
-        "sleep_start_date": "2020-01-01",
-        "rhr_start_date": "2020-01-01",
-        "monitoring_start_date": "2020-01-01",
         "download_latest_activities": 25,
         "download_all_activities": 1000
     },
@@ -35,11 +32,6 @@
         "rhr_dir": "mydata/rhr"
     },
     "enabled_stats": {
-        "monitoring": true,
-        "steps": true,
-        "itime": true,
-        "sleep": true,
-        "rhr": true,
         "weight": true,
         "activities": true
     },
@@ -52,4 +44,3 @@
         "look_back_days": 90
     }
 }
-

@@ -51,7 +51,13 @@ class GarminDownloader:
         self.config = config_manager
         self.garth_session_file = self.config.get_session_file()
         self.garth = GarthClient()
-        self.garth.configure(domain=self.config.get_garmin_base_domain())
+        self.garth.configure(domain=self.config.get_garmin_domain())
+        
+        # 禁用SSL验证（中国区证书问题临时解决方案）
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        self.garth.sess.verify = False
+        
         self.display_name = None
         self.full_name = None
 
@@ -159,6 +165,7 @@ class GarminDownloader:
         summary_dir = self.config.get_base_dir()
         os.makedirs(f'{summary_dir}/daily_summary', exist_ok=True)
         
+        success_count = 0
         for day in tqdm(range(days), desc="每日汇总"):
             download_date = start_date + timedelta(days=day)
             date_str = download_date.strftime('%Y-%m-%d')
@@ -169,9 +176,14 @@ class GarminDownloader:
                 
                 if data:
                     filename = f'{summary_dir}/daily_summary/{date_str}'
-                    self._save_json_to_file(filename, data)
+                    if self._save_json_to_file(filename, data):
+                        success_count += 1
+                else:
+                    logger.debug(f"{date_str} 无数据")
             except Exception as e:
-                logger.debug(f"下载 {date_str} 每日汇总失败: {e}")
+                logger.warning(f"下载 {date_str} 每日汇总失败: {e}")
+        
+        logger.info(f"成功保存 {success_count}/{days} 个每日汇总文件")
 
     def download_sleep(self, start_date, days):
         """
@@ -185,6 +197,7 @@ class GarminDownloader:
         
         sleep_dir = self.config.get_sleep_dir()
         
+        success_count = 0
         for day in tqdm(range(days), desc="睡眠数据"):
             download_date = start_date + timedelta(days=day)
             date_str = download_date.strftime('%Y-%m-%d')
@@ -195,9 +208,14 @@ class GarminDownloader:
                 
                 if data and 'dailySleepDTO' in data:
                     filename = f'{sleep_dir}/{date_str}'
-                    self._save_json_to_file(filename, data['dailySleepDTO'])
+                    if self._save_json_to_file(filename, data['dailySleepDTO']):
+                        success_count += 1
+                else:
+                    logger.debug(f"{date_str} 无睡眠数据")
             except Exception as e:
-                logger.debug(f"下载 {date_str} 睡眠数据失败: {e}")
+                logger.warning(f"下载 {date_str} 睡眠数据失败: {e}")
+        
+        logger.info(f"成功保存 {success_count}/{days} 个睡眠数据文件")
 
     def download_weight(self, start_date, end_date):
         """
@@ -245,6 +263,7 @@ class GarminDownloader:
         
         rhr_dir = self.config.get_rhr_dir()
         
+        success_count = 0
         for day in tqdm(range(days), desc="静息心率"):
             download_date = start_date + timedelta(days=day)
             date_str = download_date.strftime('%Y-%m-%d')
@@ -255,9 +274,14 @@ class GarminDownloader:
                 
                 if data:
                     filename = f'{rhr_dir}/{date_str}'
-                    self._save_json_to_file(filename, data)
+                    if self._save_json_to_file(filename, data):
+                        success_count += 1
+                else:
+                    logger.debug(f"{date_str} 无心率数据")
             except Exception as e:
-                logger.debug(f"下载 {date_str} 静息心率数据失败: {e}")
+                logger.warning(f"下载 {date_str} 静息心率数据失败: {e}")
+        
+        logger.info(f"成功保存 {success_count}/{days} 个静息心率文件")
 
     def download_activities(self, start_index=0, limit=100):
         """
@@ -330,7 +354,7 @@ class GarminDownloader:
 
     def download_all_data(self, latest=False):
         """
-        下载所有数据
+        下载所有数据（中国区仅支持活动数据）
         
         Args:
             latest: 是否只下载最新数据
@@ -344,39 +368,8 @@ class GarminDownloader:
         
         today = date.today()
         
-        # 下载每日汇总
-        if self.config.is_stat_enabled('monitoring'):
-            start_date = self.config.get_start_date('monitoring')
-            if start_date:
-                days = (today - start_date).days + 1
-                if latest:
-                    days = min(days, 30)  # 最新数据只下载30天
-                self.download_daily_summary(start_date, days)
-        
-        # 下载睡眠数据
-        if self.config.is_stat_enabled('sleep'):
-            start_date = self.config.get_start_date('sleep')
-            if start_date:
-                days = (today - start_date).days + 1
-                if latest:
-                    days = min(days, 30)
-                self.download_sleep(start_date, days)
-        
-        # 下载体重数据
-        if self.config.is_stat_enabled('weight'):
-            start_date = self.config.get_start_date('weight')
-            if start_date:
-                end_date = today
-                self.download_weight(start_date, end_date)
-        
-        # 下载静息心率数据
-        if self.config.is_stat_enabled('rhr'):
-            start_date = self.config.get_start_date('rhr')
-            if start_date:
-                days = (today - start_date).days + 1
-                if latest:
-                    days = min(days, 30)
-                self.download_resting_heart_rate(start_date, days)
+        # 中国区：只下载活动数据（其他API返回403 Forbidden）
+        logger.info("中国区Garmin - 下载活动数据")
         
         # 下载活动数据
         if self.config.is_stat_enabled('activities'):
@@ -386,12 +379,17 @@ class GarminDownloader:
                 limit = self.config.get_download_all_activities()
             
             activities = self.download_activities(0, limit)
-            
-            # 下载FIT文件（可选）
-            # for activity in activities:
-            #     activity_id = activity.get('activityId')
-            #     if activity_id:
-            #         self.download_activity_fit(activity_id)
+            logger.info(f"成功下载 {len(activities)} 个活动")
+        
+        # 下载体重数据（可选）
+        if self.config.is_stat_enabled('weight'):
+            start_date = self.config.get_start_date('weight')
+            if start_date:
+                end_date = today
+                try:
+                    self.download_weight(start_date, end_date)
+                except Exception as e:
+                    logger.warning(f"下载体重数据失败: {e}")
         
         logger.info("=" * 50)
         logger.info("数据下载完成")

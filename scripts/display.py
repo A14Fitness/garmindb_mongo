@@ -37,18 +37,19 @@ def setup_logging(config):
 def display_stats(db_client):
     """显示数据库统计信息"""
     print("\n" + "=" * 60)
-    print("数据库统计")
+    print("数据库统计（中国区）")
     print("=" * 60)
     
     stats = db_client.get_stats()
     
-    print("\n记录数量:")
-    print(f"  每日汇总: {stats['daily_summary_count']}")
-    print(f"  监控数据: {stats['monitoring_count']}")
-    print(f"  睡眠记录: {stats['sleep_count']}")
-    print(f"  体重记录: {stats['weight_count']}")
-    print(f"  静息心率: {stats['rhr_count']}")
-    print(f"  活动记录: {stats['activities_count']}")
+    print("\n可用数据:")
+    print(f"  ✅ 活动记录: {stats['activities_count']}")
+    print(f"  ✅ 体重记录: {stats['weight_count']}")
+    
+    print("\n不可用数据（中国区API限制）:")
+    print(f"  ❌ 每日汇总: {stats['daily_summary_count']}")
+    print(f"  ❌ 睡眠记录: {stats['sleep_count']}")
+    print(f"  ❌ 静息心率: {stats['rhr_count']}")
     
     print("\n数据时间范围:")
     ranges = db_client.get_date_ranges()
@@ -257,14 +258,15 @@ def main():
         if args.activities or show_all:
             display_recent_activities(db_client, args.days, args.activity_type)
         
-        if args.daily or show_all:
-            display_daily_summary(db_client, args.days)
-        
-        if args.sleep or show_all:
-            display_sleep_summary(db_client, args.days)
-        
-        if args.weight or show_all:
+        # 体重数据（如果有）
+        if args.weight:
             display_weight_records(db_client, limit=10)
+        
+        # 以下功能在中国区不可用，显示提示
+        if args.daily or args.sleep:
+            print("\n⚠️ 注意：每日汇总和睡眠数据在中国区Garmin不可用（API限制）")
+            print("  仅活动数据可以自动下载")
+            print("  建议使用: python scripts/display.py --activities")
         
         print("\n" + "=" * 60)
         

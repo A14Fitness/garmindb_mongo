@@ -109,11 +109,15 @@ class ActivityData:
     @staticmethod
     def from_json_data(json_data: Dict[str, Any]) -> Dict[str, Any]:
         """从JSON数据创建活动数据"""
+        # 提取activityType
+        activity_type_obj = json_data.get('activityType', {})
+        activity_type = activity_type_obj.get('typeKey') if isinstance(activity_type_obj, dict) else activity_type_obj
+        
         return {
             'activityId': json_data.get('activityId'),
             'activityName': json_data.get('activityName'),
-            'activityType': json_data.get('activityType', {}).get('typeKey'),
-            'activityTypeDisplay': json_data.get('activityType', {}).get('typeKey'),
+            'activityType': activity_type,
+            'activityTypeDisplay': activity_type,
             'startTimeGMT': json_data.get('startTimeGMT'),
             'startTimeLocal': json_data.get('startTimeLocal'),
             'duration': json_data.get('duration'),
@@ -127,7 +131,7 @@ class ActivityData:
             'elevationLoss': json_data.get('elevationLoss'),
             'averageTemperature': json_data.get('averageTemperature'),
             'steps': json_data.get('steps'),
-            'averageCadence': json_data.get('averageRunningCadenceInStepsPerMinute'),
+            'averageCadence': json_data.get('averageRunningCadenceInStepsPerMinute') or json_data.get('averageSwimCadenceInStrokesPerMinute'),
             'maxCadence': json_data.get('maxRunningCadenceInStepsPerMinute'),
             'strideLength': json_data.get('strideLength'),
             'vO2Max': json_data.get('vO2MaxValue'),
@@ -214,4 +218,5 @@ class UserProfile:
             'level': json_data.get('level'),
             'created_at': datetime.utcnow()
         }
+
 

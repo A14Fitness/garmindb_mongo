@@ -43,28 +43,14 @@ class MongoDBClient:
             raise
     
     def _setup_indexes(self):
-        """设置数据库索引"""
-        # 监控数据索引
-        self.db.monitoring.create_index([('timestamp', DESCENDING)])
-        self.db.monitoring.create_index([('date', DESCENDING)])
-        
-        # 睡眠数据索引
-        self.db.sleep.create_index([('calendarDate', DESCENDING)])
-        self.db.sleep.create_index([('sleepStartTimestampGMT', DESCENDING)])
-        
-        # 体重数据索引
-        self.db.weight.create_index([('date', DESCENDING)])
-        
-        # 静息心率数据索引
-        self.db.resting_heart_rate.create_index([('calendarDate', DESCENDING)])
-        
-        # 活动数据索引
+        """设置数据库索引（中国区简化版）"""
+        # 活动数据索引（主要功能）
         self.db.activities.create_index([('activityId', ASCENDING)], unique=True)
         self.db.activities.create_index([('startTimeGMT', DESCENDING)])
         self.db.activities.create_index([('activityType', ASCENDING)])
         
-        # 每日汇总数据索引
-        self.db.daily_summary.create_index([('calendarDate', DESCENDING)], unique=True)
+        # 体重数据索引
+        self.db.weight.create_index([('date', DESCENDING)])
         
         logger.info("数据库索引设置完成")
     
@@ -74,48 +60,26 @@ class MongoDBClient:
             self.client.close()
             logger.info("MongoDB连接已关闭")
     
-    # 监控数据操作
-    def insert_monitoring_data(self, data):
-        """插入监控数据"""
-        try:
-            result = self.db.monitoring.insert_many(data)
-            logger.info(f"插入了 {len(result.inserted_ids)} 条监控数据")
-            return result.inserted_ids
-        except Exception as e:
-            logger.error(f"插入监控数据失败: {e}")
-            return []
+    # 以下方法在中国区不可用（API返回403 Forbidden）
+    # 保留代码供将来参考或国际版用户使用
     
-    def get_latest_monitoring_timestamp(self):
-        """获取最新的监控数据时间戳"""
-        result = self.db.monitoring.find_one(
-            sort=[('timestamp', DESCENDING)]
-        )
-        return result['timestamp'] if result else None
+    # def insert_monitoring_data(self, data):
+    #     """插入监控数据（中国区不可用）"""
+    #     pass
     
-    # 睡眠数据操作
-    def insert_sleep_data(self, data):
-        """插入睡眠数据"""
-        try:
-            if isinstance(data, list):
-                result = self.db.sleep.insert_many(data)
-                logger.info(f"插入了 {len(result.inserted_ids)} 条睡眠数据")
-                return result.inserted_ids
-            else:
-                result = self.db.sleep.insert_one(data)
-                logger.info(f"插入了1条睡眠数据")
-                return [result.inserted_id]
-        except Exception as e:
-            logger.error(f"插入睡眠数据失败: {e}")
-            return []
+    # def insert_sleep_data(self, data):
+    #     """插入睡眠数据（中国区不可用）"""
+    #     pass
     
-    def get_latest_sleep_date(self):
-        """获取最新的睡眠数据日期"""
-        result = self.db.sleep.find_one(
-            sort=[('calendarDate', DESCENDING)]
-        )
-        return result['calendarDate'] if result else None
+    # def insert_rhr_data(self, data):
+    #     """插入静息心率数据（中国区不可用）"""
+    #     pass
     
-    # 体重数据操作
+    # def insert_daily_summary(self, data):
+    #     """插入每日汇总数据（中国区不可用）"""
+    #     pass
+    
+    # 体重数据操作（部分可用）
     def insert_weight_data(self, data):
         """插入体重数据"""
         try:
@@ -137,29 +101,6 @@ class MongoDBClient:
             sort=[('date', DESCENDING)]
         )
         return result['date'] if result else None
-    
-    # 静息心率数据操作
-    def insert_rhr_data(self, data):
-        """插入静息心率数据"""
-        try:
-            if isinstance(data, list):
-                result = self.db.resting_heart_rate.insert_many(data)
-                logger.info(f"插入了 {len(result.inserted_ids)} 条静息心率数据")
-                return result.inserted_ids
-            else:
-                result = self.db.resting_heart_rate.insert_one(data)
-                logger.info(f"插入了1条静息心率数据")
-                return [result.inserted_id]
-        except Exception as e:
-            logger.error(f"插入静息心率数据失败: {e}")
-            return []
-    
-    def get_latest_rhr_date(self):
-        """获取最新的静息心率数据日期"""
-        result = self.db.resting_heart_rate.find_one(
-            sort=[('calendarDate', DESCENDING)]
-        )
-        return result['calendarDate'] if result else None
     
     # 活动数据操作
     def insert_activity_data(self, data):
@@ -199,40 +140,7 @@ class MongoDBClient:
         """根据ID获取活动"""
         return self.db.activities.find_one({'activityId': activity_id})
     
-    # 每日汇总数据操作
-    def insert_daily_summary(self, data):
-        """插入每日汇总数据"""
-        try:
-            result = self.db.daily_summary.update_one(
-                {'calendarDate': data['calendarDate']},
-                {'$set': data},
-                upsert=True
-            )
-            if result.upserted_id:
-                logger.info(f"插入新每日汇总: {data['calendarDate']}")
-            else:
-                logger.info(f"更新每日汇总: {data['calendarDate']}")
-            return result.upserted_id or result.modified_count
-        except Exception as e:
-            logger.error(f"插入每日汇总数据失败: {e}")
-            return None
-    
-    def get_latest_daily_summary_date(self):
-        """获取最新的每日汇总日期"""
-        result = self.db.daily_summary.find_one(
-            sort=[('calendarDate', DESCENDING)]
-        )
-        return result['calendarDate'] if result else None
-    
-    # 查询操作
-    def query_monitoring_by_date_range(self, start_date, end_date):
-        """查询日期范围内的监控数据"""
-        return list(self.db.monitoring.find({
-            'date': {
-                '$gte': start_date,
-                '$lte': end_date
-            }
-        }).sort('timestamp', ASCENDING))
+    # 查询操作（活动数据）
     
     def query_activities_by_date_range(self, start_date, end_date):
         """查询日期范围内的活动数据"""
@@ -249,40 +157,23 @@ class MongoDBClient:
             'activityType': activity_type
         }).sort('startTimeGMT', DESCENDING).limit(limit))
     
-    def query_daily_summaries(self, start_date, end_date):
-        """查询日期范围内的每日汇总"""
-        return list(self.db.daily_summary.find({
-            'calendarDate': {
-                '$gte': start_date,
-                '$lte': end_date
-            }
-        }).sort('calendarDate', ASCENDING))
-    
     # 统计操作
     def get_stats(self):
-        """获取数据库统计信息"""
+        """获取数据库统计信息（中国区简化版）"""
         stats = {
-            'monitoring_count': self.db.monitoring.count_documents({}),
-            'sleep_count': self.db.sleep.count_documents({}),
-            'weight_count': self.db.weight.count_documents({}),
-            'rhr_count': self.db.resting_heart_rate.count_documents({}),
             'activities_count': self.db.activities.count_documents({}),
-            'daily_summary_count': self.db.daily_summary.count_documents({})
+            'weight_count': self.db.weight.count_documents({}),
+            # 以下在中国区不可用
+            'daily_summary_count': 0,
+            'sleep_count': 0,
+            'rhr_count': 0,
+            'monitoring_count': 0
         }
         return stats
     
     def get_date_ranges(self):
-        """获取各类数据的日期范围"""
+        """获取各类数据的日期范围（中国区简化版）"""
         ranges = {}
-        
-        # 监控数据范围
-        first_monitoring = self.db.monitoring.find_one(sort=[('timestamp', ASCENDING)])
-        last_monitoring = self.db.monitoring.find_one(sort=[('timestamp', DESCENDING)])
-        if first_monitoring and last_monitoring:
-            ranges['monitoring'] = {
-                'start': first_monitoring['timestamp'],
-                'end': last_monitoring['timestamp']
-            }
         
         # 活动数据范围
         first_activity = self.db.activities.find_one(sort=[('startTimeGMT', ASCENDING)])
@@ -309,4 +200,5 @@ if __name__ == '__main__':
         print(f"  {key}: {value}")
     
     client.close()
+
 
