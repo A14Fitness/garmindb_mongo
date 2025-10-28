@@ -195,54 +195,22 @@ class DataImporter:
         for activity_id, filepath in tqdm(activity_files.items(), desc="导入活动"):
             data = self._load_json_file(filepath)
             if data:
-                # 判断是summary还是details文件
-                is_details = 'summaryDTO' in data
+                # 使用ActivityData模型提取数据
+                from db.models import ActivityData
+                activity = ActivityData.from_json_data(data)
                 
-                if is_details:
-                    # details文件：数据在summaryDTO中
-                    summary = data.get('summaryDTO', {})
-                    activity_type_obj = data.get('activityTypeDTO', {})
-                else:
-                    # summary文件：数据在根级别
-                    summary = data
-                    activity_type_obj = data.get('activityType', {})
+                # 尝试加载分段数据
+                splits_file = filepath.replace('_summary.json', '_splits.json').replace('_details.json', '_splits.json')
+                laps_file = filepath.replace('_summary.json', '_laps.json').replace('_details.json', '_laps.json')
                 
-                # 提取activityType
-                activity_type = activity_type_obj.get('typeKey') if isinstance(activity_type_obj, dict) else activity_type_obj
-                
-                activity = {
-                    'activityId': data.get('activityId'),
-                    'activityName': data.get('activityName'),
-                    'activityType': activity_type,
-                    'activityTypeDisplay': activity_type,
-                    'startTimeGMT': summary.get('startTimeGMT'),
-                    'startTimeLocal': summary.get('startTimeLocal'),
-                    'duration': summary.get('duration'),
-                    'distance': summary.get('distance'),
-                    'averageSpeed': summary.get('averageSpeed'),
-                    'maxSpeed': summary.get('maxSpeed'),
-                    'calories': summary.get('calories'),
-                    'averageHR': summary.get('averageHR'),
-                    'maxHR': summary.get('maxHR'),
-                    'elevationGain': summary.get('elevationGain'),
-                    'elevationLoss': summary.get('elevationLoss'),
-                    'averageTemperature': summary.get('averageTemperature'),
-                    'steps': summary.get('steps'),
-                    'averageCadence': summary.get('averageRunningCadenceInStepsPerMinute') or summary.get('averageSwimCadence'),
-                    'maxCadence': summary.get('maxRunningCadenceInStepsPerMinute'),
-                    'strideLength': summary.get('strideLength'),
-                    'vO2Max': summary.get('vO2MaxValue'),
-                    'trainingEffect': summary.get('trainingEffect') or summary.get('aerobicTrainingEffect'),
-                    'anaerobicTrainingEffect': summary.get('anaerobicTrainingEffect'),
-                    'locationName': data.get('locationName'),
-                    'startLatitude': data.get('startLatitude'),
-                    'startLongitude': data.get('startLongitude'),
-                    'endLatitude': data.get('endLatitude'),
-                    'endLongitude': data.get('endLongitude'),
-                    'deviceName': data.get('deviceName'),
-                    'raw_data': data,
-                    'created_at': datetime.utcnow()
-                }
+                if os.path.exists(splits_file):
+                    splits_data = self._load_json_file(splits_file)
+                    if splits_data:
+                        activity['splits_data'] = splits_data
+                elif os.path.exists(laps_file):
+                    laps_data = self._load_json_file(laps_file)
+                    if laps_data:
+                        activity['splits_data'] = laps_data
                 
                 if self.db.insert_activity_data(activity):
                     count += 1

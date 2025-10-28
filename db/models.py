@@ -109,8 +109,21 @@ class ActivityData:
     @staticmethod
     def from_json_data(json_data: Dict[str, Any]) -> Dict[str, Any]:
         """从JSON数据创建活动数据"""
+        # 判断是summary还是details文件
+        is_details = 'summaryDTO' in json_data
+        
+        if is_details:
+            # details文件：数据在summaryDTO中
+            summary = json_data.get('summaryDTO', {})
+            activity_type_obj = json_data.get('activityTypeDTO', {})
+            metadata = json_data.get('metadataDTO', {})
+        else:
+            # summary文件：数据在根级别
+            summary = json_data
+            activity_type_obj = json_data.get('activityType', {})
+            metadata = {}
+        
         # 提取activityType
-        activity_type_obj = json_data.get('activityType', {})
         activity_type = activity_type_obj.get('typeKey') if isinstance(activity_type_obj, dict) else activity_type_obj
         
         return {
@@ -118,32 +131,74 @@ class ActivityData:
             'activityName': json_data.get('activityName'),
             'activityType': activity_type,
             'activityTypeDisplay': activity_type,
-            'startTimeGMT': json_data.get('startTimeGMT'),
-            'startTimeLocal': json_data.get('startTimeLocal'),
-            'duration': json_data.get('duration'),
-            'distance': json_data.get('distance'),
-            'averageSpeed': json_data.get('averageSpeed'),
-            'maxSpeed': json_data.get('maxSpeed'),
-            'calories': json_data.get('calories'),
-            'averageHR': json_data.get('averageHR'),
-            'maxHR': json_data.get('maxHR'),
-            'elevationGain': json_data.get('elevationGain'),
-            'elevationLoss': json_data.get('elevationLoss'),
-            'averageTemperature': json_data.get('averageTemperature'),
-            'steps': json_data.get('steps'),
-            'averageCadence': json_data.get('averageRunningCadenceInStepsPerMinute') or json_data.get('averageSwimCadenceInStrokesPerMinute'),
-            'maxCadence': json_data.get('maxRunningCadenceInStepsPerMinute'),
-            'strideLength': json_data.get('strideLength'),
-            'vO2Max': json_data.get('vO2MaxValue'),
-            'trainingEffect': json_data.get('aerobicTrainingEffect'),
-            'anaerobicTrainingEffect': json_data.get('anaerobicTrainingEffect'),
+            'startTimeGMT': summary.get('startTimeGMT'),
+            'startTimeLocal': summary.get('startTimeLocal'),
+            'duration': summary.get('duration'),
+            'movingDuration': summary.get('movingDuration'),
+            'elapsedDuration': summary.get('elapsedDuration'),
+            'distance': summary.get('distance'),
+            'averageSpeed': summary.get('averageSpeed'),
+            'maxSpeed': summary.get('maxSpeed'),
+            'calories': summary.get('calories'),
+            'bmrCalories': summary.get('bmrCalories'),
+            'averageHR': summary.get('averageHR'),
+            'maxHR': summary.get('maxHR'),
+            'minHR': summary.get('minHR'),
+            'elevationGain': summary.get('elevationGain'),
+            'elevationLoss': summary.get('elevationLoss'),
+            'minElevation': summary.get('minElevation'),
+            'maxElevation': summary.get('maxElevation'),
+            'averageTemperature': summary.get('averageTemperature'),
+            'steps': summary.get('steps'),
+            'averageCadence': summary.get('averageRunningCadenceInStepsPerMinute') or summary.get('averageSwimCadence'),
+            'maxCadence': summary.get('maxRunningCadenceInStepsPerMinute'),
+            'averageRunCadence': summary.get('averageRunningCadenceInStepsPerMinute'),
+            'averageSwimCadence': summary.get('averageSwimCadence'),
+            'strideLength': summary.get('strideLength'),
+            'averageStrideLength': summary.get('averageStrideLength'),
+            'vO2Max': summary.get('vO2MaxValue'),
+            'trainingEffect': summary.get('trainingEffect') or summary.get('aerobicTrainingEffect'),
+            'anaerobicTrainingEffect': summary.get('anaerobicTrainingEffect'),
             'locationName': json_data.get('locationName'),
             'startLatitude': json_data.get('startLatitude'),
             'startLongitude': json_data.get('startLongitude'),
             'endLatitude': json_data.get('endLatitude'),
             'endLongitude': json_data.get('endLongitude'),
             'deviceName': json_data.get('deviceName'),
+            # 游泳专属字段
+            'poolLength': summary.get('poolLength'),
+            'numberOfActiveLengths': summary.get('numberOfActiveLengths'),
+            'totalNumberOfStrokes': summary.get('totalNumberOfStrokes'),
+            'averageStrokes': summary.get('averageStrokes'),
+            'averageSWOLF': summary.get('averageSWOLF'),
+            'averageStrokeDistance': summary.get('averageStrokeDistance'),
+            'unitOfPoolLength': summary.get('unitOfPoolLength'),
+            # 骑行专属字段
+            'averagePower': summary.get('averagePower'),
+            'maxPower': summary.get('maxPower'),
+            'averageCadence_cycling': summary.get('averageCadence'),
+            # 跑步专属字段
+            'ascentTime': summary.get('ascentTime'),
+            'descentTime': summary.get('descentTime'),
+            'flatTime': summary.get('flatTime'),
+            # 训练相关
+            'moderateIntensityMinutes': summary.get('moderateIntensityMinutes'),
+            'vigorousIntensityMinutes': summary.get('vigorousIntensityMinutes'),
+            'trainingEffectLabel': summary.get('trainingEffectLabel'),
+            'activityTrainingLoad': summary.get('activityTrainingLoad'),
+            'directWorkoutFeel': summary.get('directWorkoutFeel'),
+            'directWorkoutRpe': summary.get('directWorkoutRpe'),
+            'recoveryHeartRate': summary.get('recoveryHeartRate'),
+            # 元数据
+            'lapCount': metadata.get('lapCount'),
+            'hasSplits': metadata.get('hasSplits'),
+            'hasChartData': metadata.get('hasChartData'),
+            'elevationCorrected': metadata.get('elevationCorrected'),
+            'manualActivity': metadata.get('manualActivity'),
+            'personalRecord': metadata.get('personalRecord'),
+            'favorite': metadata.get('favorite'),
             'raw_data': json_data,  # 保存原始数据
+            'splits_data': None,  # 分段数据（稍后从splits/laps文件加载）
             'created_at': datetime.utcnow()
         }
     

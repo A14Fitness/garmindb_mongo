@@ -52,6 +52,10 @@ class MongoDBClient:
         # 体重数据索引
         self.db.weight.create_index([('date', DESCENDING)])
         
+        # 训练计划数据索引
+        self.db.training_plans.create_index([('date', ASCENDING)], unique=True)
+        self.db.training_plans.create_index([('created_at', DESCENDING)])
+        
         logger.info("数据库索引设置完成")
     
     def close(self):
@@ -144,10 +148,21 @@ class MongoDBClient:
     
     def query_activities_by_date_range(self, start_date, end_date):
         """查询日期范围内的活动数据"""
+        # 将 datetime 对象转换为 ISO 格式字符串
+        if isinstance(start_date, datetime):
+            start_str = start_date.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-5]  # 去掉多余的微秒位
+        else:
+            start_str = start_date
+        
+        if isinstance(end_date, datetime):
+            end_str = end_date.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-5]
+        else:
+            end_str = end_date
+        
         return list(self.db.activities.find({
             'startTimeGMT': {
-                '$gte': start_date,
-                '$lte': end_date
+                '$gte': start_str,
+                '$lte': end_str
             }
         }).sort('startTimeGMT', DESCENDING))
     
@@ -185,6 +200,93 @@ class MongoDBClient:
             }
         
         return ranges
+    
+    # 训练计划相关方法
+    def get_training_plan(self, date):
+        """获取指定日期的训练计划"""
+        try:
+            plan = self.db.training_plans.find_one({'date': date})
+            return plan
+        except Exception as e:
+            logger.error(f"获取训练计划失败: {e}")
+            return None
+    
+    def save_training_plan(self, date, plan_data):
+        """保存训练计划"""
+        try:
+            plan_doc = {
+                'date': date,
+                'plan_type': plan_data.get('plan_type', ''),
+                'plan_content': plan_data.get('plan_content', {}),
+                'completion': plan_data.get('completion', {
+                    'status': 'not_started',
+                    'actual_distance': None,
+                    'actual_duration': None,
+                    'notes': ''
+                }),
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }
+            
+            result = self.db.training_plans.update_one(
+                {'date': date},
+                {'$set': plan_doc},
+                upsert=True
+            )
+            return result
+        except Exception as e:
+            logger.error(f"保存训练计划失败: {e}")
+            return None
+    
+    def update_training_completion(self, date, completion_data):
+        """更新训练完成情况"""
+        try:
+            update_data = {
+                'completion': completion_data,
+                'updated_at': datetime.utcnow()
+            }
+            
+            result = self.db.training_plans.update_one(
+                {'date': date},
+                {'$set': update_data}
+            )
+            return result
+        except Exception as e:
+            logger.error(f"更新训练完成情况失败: {e}")
+            return None
+    
+    def get_training_plans_by_date_range(self, start_date, end_date):
+        """获取日期范围内的训练计划"""
+        try:
+            # 将日期对象转换为字符串格式
+            if hasattr(start_date, 'strftime'):
+                start_date_str = start_date.strftime('%Y-%m-%d')
+            else:
+                start_date_str = str(start_date)
+                
+            if hasattr(end_date, 'strftime'):
+                end_date_str = end_date.strftime('%Y-%m-%d')
+            else:
+                end_date_str = str(end_date)
+            
+            plans = list(self.db.training_plans.find({
+                'date': {'$gte': start_date_str, '$lte': end_date_str}
+            }).sort('date', 1))
+            return plans
+        except Exception as e:
+            logger.error(f"获取训练计划范围失败: {e}")
+            return []
+    
+    def delete_training_plans_by_date_range(self, start_date, end_date):
+        """删除日期范围内的训练计划"""
+        try:
+            result = self.db.training_plans.delete_many({
+                'date': {'$gte': start_date, '$lte': end_date}
+            })
+            return result
+        except Exception as e:
+            logger.error(f"删除训练计划失败: {e}")
+            return None
 
 
 if __name__ == '__main__':

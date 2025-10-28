@@ -38,6 +38,8 @@ class GarminDownloader:
     garmin_connect_usersummary_url = "/usersummary-service/usersummary"
     garmin_connect_daily_summary_url = garmin_connect_usersummary_url + "/daily"
     garmin_connect_daily_hydration_url = garmin_connect_usersummary_url + "/hydration/allData"
+    garmin_connect_splits_url = "/activity-service/activity/{activity_id}/splits"
+    garmin_connect_laps_url = "/activity-service/activity/{activity_id}/laps"
 
     download_days_overlap = 3  # 重新下载最近几天的数据
 
@@ -318,6 +320,9 @@ class GarminDownloader:
                                 self._save_json_to_file(filename, details)
                         except Exception as e:
                             logger.debug(f"下载活动 {activity_id} 详情失败: {e}")
+                        
+                        # 下载分段数据
+                        self.download_activity_splits(activity_id)
                 
                 return activities
             else:
@@ -349,6 +354,45 @@ class GarminDownloader:
                 return True
         except Exception as e:
             logger.debug(f"下载活动 {activity_id} 的FIT文件失败: {e}")
+        
+        return False
+
+    def download_activity_splits(self, activity_id):
+        """
+        下载活动的分段数据
+        
+        Args:
+            activity_id: 活动ID
+        """
+        try:
+            activities_dir = self.config.get_activities_dir()
+            
+            # 尝试下载splits数据
+            try:
+                url = self.garmin_connect_splits_url.format(activity_id=activity_id)
+                splits_data = self.garth.connectapi(url)
+                if splits_data:
+                    filename = f'{activities_dir}/{activity_id}_splits'
+                    if self._save_json_to_file(filename, splits_data):
+                        logger.debug(f"下载分段数据: {filename}")
+                        return True
+            except Exception as e:
+                logger.debug(f"下载活动 {activity_id} 的splits数据失败: {e}")
+            
+            # 尝试下载laps数据
+            try:
+                url = self.garmin_connect_laps_url.format(activity_id=activity_id)
+                laps_data = self.garth.connectapi(url)
+                if laps_data:
+                    filename = f'{activities_dir}/{activity_id}_laps'
+                    if self._save_json_to_file(filename, laps_data):
+                        logger.debug(f"下载分段数据: {filename}")
+                        return True
+            except Exception as e:
+                logger.debug(f"下载活动 {activity_id} 的laps数据失败: {e}")
+                
+        except Exception as e:
+            logger.debug(f"下载活动 {activity_id} 的分段数据失败: {e}")
         
         return False
 
