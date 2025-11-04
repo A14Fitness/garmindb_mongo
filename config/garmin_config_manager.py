@@ -65,7 +65,7 @@ class GarminConfigManager:
         username = mongo_config.get('username', '')
         password = mongo_config.get('password', '')
         host = mongo_config.get('host', 'localhost')
-        port = mongo_config.get('port', 27017)
+        port = mongo_config.get('port', 27999)
         auth_source = mongo_config.get('auth_source', 'admin')
         
         if username and password:

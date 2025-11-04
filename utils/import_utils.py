@@ -16,23 +16,25 @@ logger = logging.getLogger(__name__)
 
 # 清除模块缓存（避免使用旧版本）
 import sys
-if 'db.models' in sys.modules:
-    del sys.modules['db.models']
+if 'data.garmin.db.models' in sys.modules:
+    del sys.modules['data.garmin.db.models']
 
 
 class DataImporter:
     """数据导入器"""
 
-    def __init__(self, config_manager, db_client):
+    def __init__(self, config_manager, db_client, user_id=None):
         """
         初始化导入器
         
         Args:
             config_manager: 配置管理器实例
             db_client: MongoDB客户端实例
+            user_id: 用户ID（myCoach多用户系统必需）
         """
         self.config = config_manager
         self.db = db_client
+        self.user_id = user_id
 
     def _load_json_file(self, filepath):
         """加载JSON文件"""
@@ -72,7 +74,7 @@ class DataImporter:
         for filepath in tqdm(json_files, desc="导入每日汇总"):
             data = self._load_json_file(filepath)
             if data:
-                from db.models import DailySummaryData
+                from ..db.models import DailySummaryData
                 summary = DailySummaryData.from_json_data(data)
                 if self.db.insert_daily_summary(summary):
                     count += 1
@@ -95,7 +97,7 @@ class DataImporter:
         for filepath in tqdm(json_files, desc="导入睡眠数据"):
             data = self._load_json_file(filepath)
             if data:
-                from db.models import SleepData
+                from ..db.models import SleepData
                 sleep = SleepData.from_json_data(data)
                 if self.db.insert_sleep_data(sleep):
                     count += 1
@@ -115,7 +117,7 @@ class DataImporter:
             return 0
         
         count = 0
-        from db.models import WeightData
+        from ..db.models import WeightData
         
         for filepath in tqdm(json_files, desc="导入体重数据"):
             data = self._load_json_file(filepath)
@@ -126,21 +128,30 @@ class DataImporter:
             if isinstance(data, dict) and 'dateWeightList' in data:
                 for entry in data['dateWeightList']:
                     weight = WeightData.from_json_data(entry)
+                    # 添加userId（myCoach多用户系统必需）
+                    if self.user_id:
+                        weight['userId'] = self.user_id
                     if self.db.insert_weight_data(weight):
                         count += 1
             # 处理数组格式
             elif isinstance(data, list):
                 for entry in data:
                     weight = WeightData.from_json_data(entry)
+                    # 添加userId（myCoach多用户系统必需）
+                    if self.user_id:
+                        weight['userId'] = self.user_id
                     if self.db.insert_weight_data(weight):
                         count += 1
             # 处理单个记录
             else:
                 weight = WeightData.from_json_data(data)
+                # 添加userId（myCoach多用户系统必需）
+                if self.user_id:
+                    weight['userId'] = self.user_id
                 if self.db.insert_weight_data(weight):
                     count += 1
         
-        logger.info(f"成功导入 {count} 条体重数据")
+        logger.info(f"成功导入 {count} 条新体重数据")
         return count
 
     def import_rhr_data(self):
@@ -160,7 +171,7 @@ class DataImporter:
             if data and isinstance(data, dict):
                 # 检查是否有静息心率数据
                 if 'restingHeartRate' in data and data['restingHeartRate']:
-                    from db.models import RestingHeartRateData
+                    from ..db.models import RestingHeartRateData
                     rhr = RestingHeartRateData.from_json_data(data)
                     if self.db.insert_rhr_data(rhr):
                         count += 1
@@ -192,12 +203,17 @@ class DataImporter:
                 activity_files[activity_id] = filepath
         
         count = 0
+        skipped_count = 0
         for activity_id, filepath in tqdm(activity_files.items(), desc="导入活动"):
             data = self._load_json_file(filepath)
             if data:
                 # 使用ActivityData模型提取数据
-                from db.models import ActivityData
+                from ..db.models import ActivityData
                 activity = ActivityData.from_json_data(data)
+                
+                # 添加userId（myCoach多用户系统必需）
+                if self.user_id:
+                    activity['userId'] = self.user_id
                 
                 # 尝试加载分段数据
                 splits_file = filepath.replace('_summary.json', '_splits.json').replace('_details.json', '_splits.json')
@@ -212,10 +228,18 @@ class DataImporter:
                     if laps_data:
                         activity['splits_data'] = laps_data
                 
-                if self.db.insert_activity_data(activity):
+                result = self.db.insert_activity_data(activity)
+                if result is False:
+                    # 已存在，跳过
+                    skipped_count += 1
+                elif result:
+                    # 成功插入新记录
                     count += 1
         
-        logger.info(f"成功导入 {count} 条活动数据")
+        if skipped_count > 0:
+            logger.info(f"成功导入 {count} 条新活动数据，跳过 {skipped_count} 条已存在的数据")
+        else:
+            logger.info(f"成功导入 {count} 条活动数据")
         return count
 
     def import_all_data(self):

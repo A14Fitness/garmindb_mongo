@@ -45,12 +45,23 @@ class MongoDBClient:
     def _setup_indexes(self):
         """设置数据库索引（中国区简化版）"""
         # 活动数据索引（主要功能）
-        self.db.activities.create_index([('activityId', ASCENDING)], unique=True)
-        self.db.activities.create_index([('startTimeGMT', DESCENDING)])
+        # myCoach多用户系统：activityId + userId 唯一组合
+        self.db.activities.create_index([('activityId', ASCENDING), ('userId', ASCENDING)], unique=True)
+        self.db.activities.create_index([('userId', ASCENDING), ('startTimeGMT', DESCENDING)])
         self.db.activities.create_index([('activityType', ASCENDING)])
         
-        # 体重数据索引
+        # 体重数据索引（支持date和calendarDate作为唯一标识）
         self.db.weight.create_index([('date', DESCENDING)])
+        self.db.weight.create_index([('calendarDate', DESCENDING)])
+        # 尝试创建唯一索引（如果字段存在）
+        try:
+            self.db.weight.create_index([('date', ASCENDING)], unique=True, sparse=True)
+        except:
+            pass  # 如果已有重复数据则跳过
+        try:
+            self.db.weight.create_index([('calendarDate', ASCENDING)], unique=True, sparse=True)
+        except:
+            pass  # 如果已有重复数据则跳过
         
         # 训练计划数据索引
         self.db.training_plans.create_index([('date', ASCENDING)], unique=True)
@@ -85,19 +96,71 @@ class MongoDBClient:
     
     # 体重数据操作（部分可用）
     def insert_weight_data(self, data):
-        """插入体重数据"""
+        """插入体重数据（增量更新：如果已存在则跳过）"""
         try:
             if isinstance(data, list):
-                result = self.db.weight.insert_many(data)
-                logger.info(f"插入了 {len(result.inserted_ids)} 条体重数据")
-                return result.inserted_ids
+                # 批量插入，过滤已存在的记录
+                inserted_count = 0
+                skipped_count = 0
+                for item in data:
+                    date = item.get('date') or item.get('calendarDate')
+                    if not date:
+                        logger.warning("体重数据缺少日期字段，跳过")
+                        continue
+                    
+                    # 检查是否已存在（基于date或calendarDate + userId）
+                    query = {
+                        '$or': [
+                            {'date': date},
+                            {'calendarDate': date}
+                        ]
+                    }
+                    # 如果有userId，添加到查询条件
+                    if 'userId' in item:
+                        query['userId'] = item['userId']
+                    existing = self.db.weight.find_one(query)
+                    if existing:
+                        skipped_count += 1
+                        continue
+                    
+                    # 插入新记录
+                    self.db.weight.insert_one(item)
+                    inserted_count += 1
+                
+                if inserted_count > 0:
+                    logger.info(f"插入了 {inserted_count} 条新体重数据，跳过 {skipped_count} 条已存在的数据")
+                else:
+                    logger.debug(f"所有体重数据已存在，跳过 {skipped_count} 条")
+                return inserted_count > 0
             else:
+                # 单条插入
+                date = data.get('date') or data.get('calendarDate')
+                if not date:
+                    logger.warning("体重数据缺少日期字段，跳过")
+                    return False
+                
+                # 检查是否已存在（基于date或calendarDate + userId）
+                query = {
+                    '$or': [
+                        {'date': date},
+                        {'calendarDate': date}
+                    ]
+                }
+                # 如果有userId，添加到查询条件
+                if 'userId' in data:
+                    query['userId'] = data['userId']
+                existing = self.db.weight.find_one(query)
+                if existing:
+                    logger.debug(f"日期 {date} 的体重数据已存在（userId: {data.get('userId')}），跳过")
+                    return False
+                
+                # 插入新记录
                 result = self.db.weight.insert_one(data)
-                logger.info(f"插入了1条体重数据")
-                return [result.inserted_id]
+                logger.debug(f"插入新体重数据: {date}")
+                return result.inserted_id is not None
         except Exception as e:
             logger.error(f"插入体重数据失败: {e}")
-            return []
+            return False
     
     def get_latest_weight_date(self):
         """获取最新的体重数据日期"""
@@ -108,18 +171,28 @@ class MongoDBClient:
     
     # 活动数据操作
     def insert_activity_data(self, data):
-        """插入活动数据"""
+        """插入活动数据（增量更新：如果已存在则跳过）"""
         try:
-            result = self.db.activities.update_one(
-                {'activityId': data['activityId']},
-                {'$set': data},
-                upsert=True
-            )
-            if result.upserted_id:
-                logger.info(f"插入新活动: {data['activityId']}")
-            else:
-                logger.info(f"更新活动: {data['activityId']}")
-            return result.upserted_id or result.modified_count
+            activity_id = data.get('activityId')
+            if not activity_id:
+                logger.warning("活动数据缺少 activityId，跳过")
+                return None
+            
+            # 构建查询条件：包含 activityId 和可选的 userId
+            query = {'activityId': activity_id}
+            if 'userId' in data:
+                query['userId'] = data['userId']
+            
+            # 检查是否已存在
+            existing = self.db.activities.find_one(query)
+            if existing:
+                logger.debug(f"活动 {activity_id} 已存在（userId: {data.get('userId')}），跳过")
+                return False  # 返回False表示已存在，跳过
+            
+            # 插入新记录
+            result = self.db.activities.insert_one(data)
+            logger.debug(f"插入新活动: {activity_id} (userId: {data.get('userId')})")
+            return result.inserted_id
         except Exception as e:
             logger.error(f"插入活动数据失败: {e}")
             return None

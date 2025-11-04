@@ -16,7 +16,7 @@ print("=" * 60)
 
 # 1. 连接MongoDB
 print("\n1. 连接MongoDB...")
-client = MongoClient('mongodb://localhost:27017/')
+client = MongoClient('mongodb://localhost:27999/')
 db = client['garmin_health']
 print("  ✓ 连接成功")
 

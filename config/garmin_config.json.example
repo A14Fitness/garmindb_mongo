@@ -1,7 +1,7 @@
 {
     "mongodb": {
         "host": "localhost",
-        "port": 27017,
+        "port": 27999,
         "database": "garmin_health",
         "username": "",
         "password": "",
@@ -17,9 +17,12 @@
         "password_file": null
     },
     "data": {
-        "weight_start_date": "2020-01-01",
-        "download_latest_activities": 25,
-        "download_all_activities": 1000
+        "weight_start_date": "2019-01-01",
+        "sleep_start_date": "2019-01-01",
+        "rhr_start_date": "2019-01-01",
+        "monitoring_start_date": "2019-01-01",
+        "download_latest_activities": 1000,
+        "download_all_activities": 10000
     },
     "directories": {
         "relative_to_home": false,

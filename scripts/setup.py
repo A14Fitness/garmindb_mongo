@@ -41,12 +41,12 @@ def main():
     print("MongoDB配置")
     print("=" * 60)
     
-    use_default_mongo = input("使用默认MongoDB配置（localhost:27017）？(Y/n): ").strip().lower()
+    use_default_mongo = input("使用默认MongoDB配置（localhost:27999）？(Y/n): ").strip().lower()
     if use_default_mongo != 'n':
         print("使用默认MongoDB配置")
     else:
         mongo_host = input("MongoDB主机地址 [localhost]: ").strip() or "localhost"
-        mongo_port = input("MongoDB端口 [27017]: ").strip() or "27017"
+        mongo_port = input("MongoDB端口 [27999]: ").strip() or "27999"
         mongo_user = input("MongoDB用户名（无则留空）: ").strip()
         mongo_pass = input("MongoDB密码（无则留空）: ").strip()
         mongo_db = input("数据库名称 [garmin_health]: ").strip() or "garmin_health"
