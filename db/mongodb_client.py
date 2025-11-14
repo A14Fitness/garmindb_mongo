@@ -64,8 +64,10 @@ class MongoDBClient:
             pass  # 如果已有重复数据则跳过
         
         # 训练计划数据索引
-        self.db.training_plans.create_index([('date', ASCENDING)], unique=True)
-        self.db.training_plans.create_index([('created_at', DESCENDING)])
+        # 允许每个用户每天有多条记录，所以使用 userId + date 组合索引（非唯一）
+        self.db.training_plans.create_index([('userId', ASCENDING), ('date', ASCENDING)])
+        self.db.training_plans.create_index([('userId', ASCENDING), ('created_at', DESCENDING)])
+        self.db.training_plans.create_index([('date', ASCENDING)])  # 保留日期索引用于查询，但不唯一
         
         logger.info("数据库索引设置完成")
     
