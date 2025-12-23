@@ -8,9 +8,12 @@ import os
 import sys
 import json
 import logging
+import time
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 try:
     from garth import Client as GarthClient
@@ -73,6 +76,16 @@ class GarminDownloader:
         
         self.display_name = None
         self.full_name = None
+        
+        # 线程锁，用于保护 garth 客户端的并发访问
+        self._garth_lock = Lock()
+        
+        # 并发下载配置
+        # 注意：并发数过高可能导致 Garmin API 限流，建议 5-15 之间
+        self.max_workers = int(os.getenv('GARMIN_DOWNLOAD_WORKERS', '8'))  # 默认8个并发
+        
+        # 请求间隔（秒），用于避免限流（0表示无间隔）
+        self.request_delay = float(os.getenv('GARMIN_REQUEST_DELAY', '0.1'))  # 默认0.1秒间隔
 
     def _save_json_to_file(self, filename, data):
         """保存JSON数据到文件"""
@@ -348,17 +361,165 @@ class GarminDownloader:
         
         logger.info(f"成功保存 {success_count}/{days} 个静息心率文件")
 
-    def download_activities(self, start_index=0, limit=100):
+    def _create_thread_garth_client(self):
+        """
+        为线程创建独立的 garth 客户端实例（共享 session）
+        
+        Returns:
+            GarthClient: 新的 garth 客户端实例
+        """
+        thread_garth = GarthClient()
+        thread_garth.configure(domain=self.config.get_garmin_domain())
+        
+        # 禁用SSL验证
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        thread_garth.sess.verify = False
+        
+        # 从主客户端加载 session（使用锁保护）
+        with self._garth_lock:
+            if os.path.isfile(self.garth_session_file):
+                try:
+                    with open(self.garth_session_file, "r", encoding="utf-8") as file:
+                        thread_garth.loads(file.read())
+                except Exception as e:
+                    logger.warning(f"线程加载 session 失败: {e}")
+                    # 如果加载失败，尝试登录
+                    username = self.config.get_user()
+                    password = self.config.get_password()
+                    if username and password:
+                        try:
+                            thread_garth.login(username, password)
+                        except Exception as e:
+                            logger.error(f"线程登录失败: {e}")
+            else:
+                # 如果没有 session 文件，尝试登录
+                username = self.config.get_user()
+                password = self.config.get_password()
+                if username and password:
+                    try:
+                        thread_garth.login(username, password)
+                    except Exception as e:
+                        logger.error(f"线程登录失败: {e}")
+        
+        return thread_garth
+
+    def _download_single_activity_details(self, activity):
+        """
+        下载单个活动的详情（用于并行下载）
+        
+        Args:
+            activity: 活动数据字典（会被修改，合并详情数据）
+            
+        Returns:
+            tuple: (activity_id, success, error_message, updated_activity)
+        """
+        activity_id = activity.get('activityId')
+        if not activity_id:
+            return (None, False, "缺少 activityId", activity)
+        
+        activities_dir = self.config.get_activities_dir()
+        
+        # 为当前线程创建独立的 garth 客户端
+        thread_garth = self._create_thread_garth_client()
+        
+        try:
+            # 保存活动摘要
+            filename = f'{activities_dir}/{activity_id}_summary'
+            self._save_json_to_file(filename, activity)
+            
+            # 下载活动详情（使用线程独立的客户端，无需锁）
+            details = None
+            try:
+                details_url = f"{self.garmin_connect_activity_service_url}/{activity_id}"
+                details = thread_garth.connectapi(details_url)
+                
+                # 添加请求间隔，避免限流
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
+                
+                if details:
+                    # 保存到文件
+                    filename = f'{activities_dir}/{activity_id}_details'
+                    self._save_json_to_file(filename, details)
+                    
+                    # 合并详情数据到 activity 对象（重要：用于后续保存到数据库）
+                    activity.update(details)
+            except Exception as e:
+                logger.debug(f"下载活动 {activity_id} 详情失败: {e}")
+            
+            # 下载分段数据（使用线程独立的客户端，可选，不影响主要数据）
+            # 为了加速，可以跳过分段数据下载
+            skip_splits = os.getenv('GARMIN_SKIP_SPLITS', 'false').lower() == 'true'
+            if not skip_splits:
+                try:
+                    # 尝试下载 splits 数据
+                    try:
+                        url = self.garmin_connect_splits_url.format(activity_id=activity_id)
+                        splits_data = thread_garth.connectapi(url)
+                        if self.request_delay > 0:
+                            time.sleep(self.request_delay)
+                        if splits_data:
+                            filename = f'{activities_dir}/{activity_id}_splits'
+                            self._save_json_to_file(filename, splits_data)
+                            # 合并 splits 数据
+                            activity['splits'] = splits_data
+                    except Exception:
+                        # 如果 splits 失败，尝试 laps
+                        try:
+                            url = self.garmin_connect_laps_url.format(activity_id=activity_id)
+                            laps_data = thread_garth.connectapi(url)
+                            if self.request_delay > 0:
+                                time.sleep(self.request_delay)
+                            if laps_data:
+                                filename = f'{activities_dir}/{activity_id}_laps'
+                                self._save_json_to_file(filename, laps_data)
+                                # 合并 laps 数据
+                                activity['laps'] = laps_data
+                        except Exception:
+                            pass  # 忽略分段数据下载失败
+                except Exception as e:
+                    logger.debug(f"下载活动 {activity_id} 分段数据失败: {e}")
+            
+            return (activity_id, True, None, activity)
+            
+        except Exception as e:
+            logger.warning(f"下载活动 {activity_id} 失败: {e}")
+            return (activity_id, False, str(e), activity)
+        finally:
+            # 清理线程客户端（可选，Python 会自动回收）
+            del thread_garth
+
+    def get_activities_list(self, start_index=0, limit=100):
+        """
+        仅获取活动列表（不下载详情），用于快速获取所有活动ID
+        
+        Args:
+            start_index: 起始索引
+            limit: 获取数量
+            
+        Returns:
+            list: 活动列表
+        """
+        try:
+            url = f"{self.garmin_connect_activity_search_url}?start={start_index}&limit={limit}"
+            activities = self.garth.connectapi(url)
+            return activities if activities else []
+        except Exception as e:
+            logger.error(f"获取活动列表失败: {e}")
+            return []
+
+    def download_activities(self, start_index=0, limit=100, parallel=True, download_details=True):
         """
         下载活动列表
         
         Args:
             start_index: 起始索引
             limit: 下载数量
+            parallel: 是否使用并行下载（默认True）
+            download_details: 是否下载活动详情（默认True）
         """
         logger.info(f"下载活动数据: 从 {start_index} 开始，限制 {limit} 个")
-        
-        activities_dir = self.config.get_activities_dir()
         
         try:
             url = f"{self.garmin_connect_activity_search_url}?start={start_index}&limit={limit}"
@@ -367,25 +528,58 @@ class GarminDownloader:
             if activities:
                 logger.info(f"获取到 {len(activities)} 个活动")
                 
-                for activity in tqdm(activities, desc="下载活动详情"):
-                    activity_id = activity.get('activityId')
-                    if activity_id:
-                        # 保存活动摘要
-                        filename = f'{activities_dir}/{activity_id}_summary'
-                        self._save_json_to_file(filename, activity)
+                # 如果不需要下载详情，直接返回
+                if not download_details:
+                    return activities
+                
+                if parallel and len(activities) > 1:
+                    # 并行下载活动详情
+                    logger.info(f"使用并行下载（{self.max_workers} 个并发线程，请求间隔 {self.request_delay} 秒）")
+                    if self.max_workers > 20:
+                        logger.warning(f"并发数 {self.max_workers} 可能过高，建议设置为 5-15 之间以避免限流")
+                    success_count = 0
+                    failed_count = 0
+                    
+                    with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                        # 提交所有任务
+                        future_to_activity = {
+                            executor.submit(self._download_single_activity_details, activity): activity
+                            for activity in activities
+                        }
                         
-                        # 下载活动详情
-                        try:
-                            details_url = f"{self.garmin_connect_activity_service_url}/{activity_id}"
-                            details = self.garth.connectapi(details_url)
-                            if details:
-                                filename = f'{activities_dir}/{activity_id}_details'
-                                self._save_json_to_file(filename, details)
-                        except Exception as e:
-                            logger.debug(f"下载活动 {activity_id} 详情失败: {e}")
-                        
-                        # 下载分段数据
-                        self.download_activity_splits(activity_id)
+                        # 使用 tqdm 显示进度
+                        with tqdm(total=len(activities), desc="下载活动详情") as pbar:
+                            for future in as_completed(future_to_activity):
+                                activity_id, success, error = future.result()
+                                if success:
+                                    success_count += 1
+                                else:
+                                    failed_count += 1
+                                pbar.update(1)
+                    
+                    logger.info(f"下载完成: 成功 {success_count} 个，失败 {failed_count} 个")
+                else:
+                    # 串行下载（兼容旧代码或单条数据）
+                    for activity in tqdm(activities, desc="下载活动详情"):
+                        activity_id = activity.get('activityId')
+                        if activity_id:
+                            # 保存活动摘要
+                            activities_dir = self.config.get_activities_dir()
+                            filename = f'{activities_dir}/{activity_id}_summary'
+                            self._save_json_to_file(filename, activity)
+                            
+                            # 下载活动详情
+                            try:
+                                details_url = f"{self.garmin_connect_activity_service_url}/{activity_id}"
+                                details = self.garth.connectapi(details_url)
+                                if details:
+                                    filename = f'{activities_dir}/{activity_id}_details'
+                                    self._save_json_to_file(filename, details)
+                            except Exception as e:
+                                logger.debug(f"下载活动 {activity_id} 详情失败: {e}")
+                            
+                            # 下载分段数据
+                            self.download_activity_splits(activity_id)
                 
                 return activities
             else:

@@ -5,9 +5,24 @@ MongoDB客户端
 """
 
 import logging
+import os
+import sys
 from datetime import datetime
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
+
+# 添加父目录到path以便导入utils模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
+# 导入统一的时区工具
+try:
+    from utils.timezone_utils import get_beijing_now
+except ImportError:
+    # 如果导入失败，使用备用函数
+    from datetime import timedelta, timezone
+    BEIJING_TZ = timezone(timedelta(hours=8))
+    def get_beijing_now() -> datetime:
+        return datetime.now(BEIJING_TZ).replace(tzinfo=None)
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +82,59 @@ class MongoDBClient:
         # 允许每个用户每天有多条记录，所以使用 userId + date 组合索引（非唯一）
         self.db.training_plans.create_index([('userId', ASCENDING), ('date', ASCENDING)])
         self.db.training_plans.create_index([('userId', ASCENDING), ('created_at', DESCENDING)])
-        self.db.training_plans.create_index([('date', ASCENDING)])  # 保留日期索引用于查询，但不唯一
+        
+        # 删除旧的 date 唯一索引（如果存在），然后创建非唯一索引
+        try:
+            # 检查是否存在唯一的 date_1 索引
+            indexes = list(self.db.training_plans.list_indexes())
+            for idx in indexes:
+                idx_name = idx.get('name', '')
+                # 检查是否有唯一的 date 索引
+                if idx_name == 'date_1' and idx.get('unique', False):
+                    logger.warning("发现旧的 date_1 唯一索引，正在删除...")
+                    self.db.training_plans.drop_index('date_1')
+                    logger.info("已删除旧的 date_1 唯一索引")
+                    break
+        except Exception as e:
+            logger.debug(f"检查 date_1 索引时出错（可能不存在）: {e}")
+        
+        # 创建非唯一的 date 索引用于查询
+        try:
+            # 明确指定 unique=False，并使用 name 参数避免冲突
+            self.db.training_plans.create_index(
+                [('date', ASCENDING)], 
+                name='date_1_nonunique',
+                unique=False,
+                background=True
+            )
+        except Exception as e:
+            # 如果索引已存在，忽略错误
+            if 'already exists' in str(e).lower() or 'duplicate' in str(e).lower():
+                logger.debug(f"date 索引已存在或创建时遇到重复: {e}")
+            elif isinstance(e, DuplicateKeyError):
+                logger.warning(f"创建 date 索引时遇到重复键错误: {e}")
+                logger.info("尝试删除并重新创建 date 索引...")
+                try:
+                    # 尝试删除可能存在的 date 相关索引
+                    for idx_name in ['date_1', 'date_1_nonunique']:
+                        try:
+                            self.db.training_plans.drop_index(idx_name)
+                        except:
+                            pass
+                    # 重新创建非唯一索引
+                    self.db.training_plans.create_index(
+                        [('date', ASCENDING)], 
+                        name='date_1_nonunique',
+                        unique=False,
+                        background=True
+                    )
+                    logger.info("已成功重新创建 date 非唯一索引")
+                except Exception as e2:
+                    logger.error(f"无法修复 date 索引: {e2}")
+                    # 如果仍然失败，至少记录错误但不中断程序
+                    pass
+            else:
+                logger.warning(f"创建 date 索引时出错: {e}")
         
         logger.info("数据库索引设置完成")
     
@@ -277,10 +344,27 @@ class MongoDBClient:
         return ranges
     
     # 训练计划相关方法
-    def get_training_plan(self, date):
-        """获取指定日期的训练计划"""
+    def get_training_plan(self, date, user_id=None):
+        """
+        获取指定日期的训练计划
+        
+        Args:
+            date: 日期字符串 (格式: YYYY-MM-DD)
+            user_id: 用户ID（可选，如果提供则只查询该用户的计划）
+        
+        Returns:
+            如果某一天有多条记录，返回 created_at 最新的那一条
+        """
         try:
-            plan = self.db.training_plans.find_one({'date': date})
+            query = {'date': date}
+            if user_id:
+                query['userId'] = user_id
+            
+            # 按 created_at 降序排序，获取最新的一条
+            plan = self.db.training_plans.find_one(
+                query,
+                sort=[('created_at', DESCENDING)]
+            )
             return plan
         except Exception as e:
             logger.error(f"获取训练计划失败: {e}")
@@ -299,8 +383,8 @@ class MongoDBClient:
                     'actual_duration': None,
                     'notes': ''
                 }),
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
+                'created_at': get_beijing_now(),
+                'updated_at': get_beijing_now()
             }
             
             result = self.db.training_plans.update_one(
@@ -318,7 +402,7 @@ class MongoDBClient:
         try:
             update_data = {
                 'completion': completion_data,
-                'updated_at': datetime.utcnow()
+                'updated_at': get_beijing_now()
             }
             
             result = self.db.training_plans.update_one(
