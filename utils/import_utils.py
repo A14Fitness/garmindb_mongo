@@ -7,6 +7,7 @@
 import os
 import json
 import logging
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
@@ -214,6 +215,16 @@ class DataImporter:
                 # 添加userId（myCoach多用户系统必需）
                 if self.user_id:
                     activity['userId'] = self.user_id
+                    # 统一主键口径：activityId = sha256(userId + "_garmin_" + sourceActivityId)
+                    # 这样可与 iOS 直传/去重逻辑保持一致，避免同一活动因主键规则不同被写成两条。
+                    raw_source_activity_id = activity.get('activityId')
+                    if raw_source_activity_id is not None and raw_source_activity_id != '':
+                        source_activity_id = str(raw_source_activity_id)
+                        activity['dataSource'] = 'garmin'
+                        activity['sourceActivityId'] = source_activity_id
+                        activity['activityId'] = hashlib.sha256(
+                            f"{self.user_id}_garmin_{source_activity_id}".encode("utf-8")
+                        ).hexdigest()
                 
                 # 尝试加载分段数据
                 splits_file = filepath.replace('_summary.json', '_splits.json').replace('_details.json', '_splits.json')

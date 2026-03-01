@@ -64,6 +64,17 @@ class MongoDBClient:
         self.db.activities.create_index([('activityId', ASCENDING), ('userId', ASCENDING)], unique=True)
         self.db.activities.create_index([('userId', ASCENDING), ('startTimeGMT', DESCENDING)])
         self.db.activities.create_index([('activityType', ASCENDING)])
+        # 对标准化后的外部活动标识建立唯一索引，防止同源活动重复入库
+        self.db.activities.create_index(
+            [('userId', ASCENDING), ('dataSource', ASCENDING), ('sourceActivityId', ASCENDING)],
+            unique=True,
+            name='uniq_user_source_activity',
+            # 仅对标准化源字段为 string 的文档生效，避免历史脏数据（null/缺失）导致建索引失败
+            partialFilterExpression={
+                'dataSource': {'$type': 'string'},
+                'sourceActivityId': {'$type': 'string'}
+            }
+        )
         
         # 体重数据索引（支持date和calendarDate作为唯一标识）
         self.db.weight.create_index([('date', DESCENDING)])
