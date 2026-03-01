@@ -158,33 +158,17 @@ class GarminDownloader:
 
     def login(self):
         """登录或恢复会话"""
-        expected_username = self.config.get_user()
-        
         # 尝试恢复会话
         session_resumed = self._resume_session()
         
         if session_resumed:
-            # ⚠️ 重要：验证 session 中的用户是否匹配当前配置中的用户
             try:
-                session_username = self.garth.username
-                if session_username != expected_username:
-                    logger.warning(f"⚠️ Session 用户不匹配！Session中的用户: {session_username}, 期望的用户: {expected_username}")
-                    logger.warning(f"   删除旧的 session 文件并重新登录...")
-                    # 删除旧的 session 文件
-                    if os.path.exists(self.garth_session_file):
-                        os.remove(self.garth_session_file)
-                    # 重新创建 garth 客户端
-                    self.garth = GarthClient()
-                    self.garth.configure(domain=self.config.get_garmin_domain())
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                    self.garth.sess.verify = False
-                    session_resumed = False  # 标记需要重新登录
+                _ = self.garth.username
             except GarthException:
                 logger.warning("Session 无效，需要重新登录")
                 session_resumed = False
         
-        # 如果没有恢复会话或用户不匹配，重新登录
+        # 如果没有恢复会话，重新登录
         if not session_resumed:
             self._login()
 
@@ -195,15 +179,12 @@ class GarminDownloader:
             logger.warning("会话已过期，重新登录")
             self._login()
 
-        # ⚠️ 重要：再次验证用户是否匹配
+        # 获取当前登录账号标识，仅用于日志与调试
+        actual_username = ""
         try:
             actual_username = self.garth.username
-            if actual_username != expected_username:
-                logger.error(f"❌ 登录后用户不匹配！实际用户: {actual_username}, 期望用户: {expected_username}")
-                raise ValueError(f"登录用户不匹配: 期望 {expected_username}, 实际 {actual_username}")
         except Exception as e:
-            logger.error(f"验证用户失败: {e}")
-            raise
+            logger.warning(f"获取当前登录账号标识失败: {e}")
 
         # 获取用户信息
         try:
@@ -224,7 +205,8 @@ class GarminDownloader:
             self.display_name = self.garth.profile.get('displayName', '')
             self.full_name = self.garth.profile.get('fullName', '')
             logger.info(f"用户: {self.full_name} ({self.display_name})")
-            logger.info(f"✅ 验证通过：登录用户 {actual_username} 匹配配置用户 {expected_username}")
+            if actual_username:
+                logger.info(f"✅ 登录成功，Garmin账号标识: {actual_username}")
         except Exception as e:
             logger.error(f"获取用户信息失败: {e}")
 
