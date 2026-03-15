@@ -59,6 +59,15 @@ class MongoDBClient:
     
     def _setup_indexes(self):
         """设置数据库索引（中国区简化版）"""
+        # 删除旧的 activityId_1 唯一索引（会导致多用户同 activityId 冲突）
+        try:
+            for idx in self.db.activities.list_indexes():
+                if idx.get('name') == 'activityId_1' and idx.get('key', {}).keys() == {'activityId'}:
+                    self.db.activities.drop_index('activityId_1')
+                    logger.info("已删除旧的 activityId_1 唯一索引")
+                    break
+        except Exception as e:
+            logger.debug(f"检查 activityId_1 索引: {e}")
         # 活动数据索引（主要功能）
         # myCoach多用户系统：activityId + userId 唯一组合
         self.db.activities.create_index([('activityId', ASCENDING), ('userId', ASCENDING)], unique=True)
@@ -266,13 +275,47 @@ class MongoDBClient:
             # 检查是否已存在
             existing = self.db.activities.find_one(query)
             if existing:
-                logger.debug(f"活动 {activity_id} 已存在（userId: {data.get('userId')}），跳过")
-                return False  # 返回False表示已存在，跳过
-            
+                # 已存在则更新 splits_data 和 heart_rate_samples（补齐缺失数据）
+                updates = {}
+                if data.get('splits_data') and not existing.get('splits_data'):
+                    updates['splits_data'] = data['splits_data']
+                if data.get('heart_rate_samples') and not existing.get('heart_rate_samples'):
+                    updates['heart_rate_samples'] = data['heart_rate_samples']
+                if updates:
+                    try:
+                        from utils.timezone_utils import get_beijing_now
+                        updates['lastUpdated'] = get_beijing_now().isoformat()
+                    except ImportError:
+                        updates['lastUpdated'] = datetime.utcnow().isoformat()
+                    self.db.activities.update_one({'_id': existing['_id']}, {'$set': updates})
+                    logger.debug(f"更新已存在活动的分段/心率: {activity_id}")
+                return False  # 返回False表示已存在
             # 插入新记录
             result = self.db.activities.insert_one(data)
             logger.debug(f"插入新活动: {activity_id} (userId: {data.get('userId')})")
             return result.inserted_id
+        except DuplicateKeyError:
+            # 重复键：可能因旧索引 activityId_1 或类型不一致导致 find_one 未命中，改为更新
+            existing = self.db.activities.find_one({'activityId': activity_id})
+            if existing:
+                updates = {}
+                if data.get('splits_data') and not existing.get('splits_data'):
+                    updates['splits_data'] = data['splits_data']
+                if data.get('heart_rate_samples') and not existing.get('heart_rate_samples'):
+                    updates['heart_rate_samples'] = data['heart_rate_samples']
+                if data.get('userId') and not existing.get('userId'):
+                    updates['userId'] = data['userId']
+                if updates:
+                    try:
+                        from utils.timezone_utils import get_beijing_now
+                        updates['lastUpdated'] = get_beijing_now().isoformat()
+                    except ImportError:
+                        updates['lastUpdated'] = datetime.utcnow().isoformat()
+                    self.db.activities.update_one({'_id': existing['_id']}, {'$set': updates})
+                    logger.debug(f"重复键后更新已存在活动: {activity_id}")
+                return False
+            logger.warning(f"重复键但未找到活动 {activity_id}，跳过")
+            return False
         except Exception as e:
             logger.error(f"插入活动数据失败: {e}")
             return None

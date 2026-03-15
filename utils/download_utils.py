@@ -147,7 +147,10 @@ class GarminDownloader:
             logger.info(f"✅ 登录成功: username={username}, domain={domain}")
             return True
         except GarthHTTPError as e:
-            logger.error(f"Garmin HTTP 错误: status_code={e.status_code}, response={e.response_text}")
+            resp = getattr(e.error, 'response', None) if hasattr(e, 'error') else None
+            status = getattr(resp, 'status_code', None) if resp else None
+            text = getattr(resp, 'text', str(e))[:200] if resp else str(e)
+            logger.error(f"Garmin HTTP 错误: status_code={status}, response={text}")
             raise
         except GarthException as e:
             logger.error(f"Garmin 异常: {e}")
@@ -299,15 +302,21 @@ class GarminDownloader:
                 # 保存完整数据
                 filename = f'{weight_dir}/weight_{start_str}_to_{end_str}'
                 self._save_json_to_file(filename, data)
-                
-                # 按日期分别保存
-                for entry in data:
-                    if 'date' in entry:
-                        entry_date = datetime.fromtimestamp(entry['date'] / 1000).strftime('%Y-%m-%d')
-                        filename = f'{weight_dir}/{entry_date}'
-                        self._save_json_to_file(filename, entry)
-                        
-                logger.info(f"下载了 {len(data)} 条体重数据")
+                # API 可能返回 list 或 {"dateWeightList": [...]}
+                entries = data if isinstance(data, list) else (data.get('dateWeightList') or data.get('entries') or [])
+                if not isinstance(entries, list):
+                    entries = []
+                for entry in entries:
+                    if isinstance(entry, dict) and 'date' in entry:
+                        try:
+                            ts = entry['date']
+                            entry_date = datetime.fromtimestamp(int(ts) / 1000 if ts > 1e12 else int(ts)).strftime('%Y-%m-%d')
+                            filename = f'{weight_dir}/{entry_date}'
+                            self._save_json_to_file(filename, entry)
+                        except (TypeError, ValueError) as ex:
+                            logger.debug(f"体重条目日期解析失败: {ex}")
+                if entries:
+                    logger.info(f"下载了 {len(entries)} 条体重数据")
         except Exception as e:
             logger.error(f"下载体重数据失败: {e}")
 
@@ -462,7 +471,35 @@ class GarminDownloader:
                             pass  # 忽略分段数据下载失败
                 except Exception as e:
                     logger.debug(f"下载活动 {activity_id} 分段数据失败: {e}")
-            
+
+            # 下载 FIT 文件并解析心率时间序列（可选，用于前端心率图表）
+            download_hr = os.getenv('GARMIN_DOWNLOAD_HR_SAMPLES', 'true').lower() != 'false'
+            if download_hr:
+                try:
+                    fit_url = f"{self.garmin_connect_download_service_url}/activity/{activity_id}"
+                    fit_data = thread_garth.download(fit_url)
+                    if self.request_delay > 0:
+                        time.sleep(self.request_delay)
+                    if fit_data:
+                        fit_path = f'{activities_dir}/{activity_id}.fit'
+                        with open(fit_path, 'wb') as f:
+                            f.write(fit_data)
+                        logger.debug(f"已保存 FIT: {fit_path} ({len(fit_data)} bytes)")
+                        try:
+                            _proj_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                            if _proj_root not in sys.path:
+                                sys.path.insert(0, _proj_root)
+                            from utils.fit_parser import parse_heart_rate_samples
+                            hr_samples = parse_heart_rate_samples(fit_path)
+                            if hr_samples:
+                                activity['heart_rate_samples'] = hr_samples
+                        except ImportError:
+                            pass
+                        except Exception as parse_e:
+                            logger.debug(f"解析活动 {activity_id} FIT 心率失败: {parse_e}")
+                except Exception as e:
+                    logger.info(f"下载活动 {activity_id} FIT 失败: {e}")
+
             return (activity_id, True, None, activity)
             
         except Exception as e:
@@ -530,10 +567,12 @@ class GarminDownloader:
                         }
                         
                         # 使用 tqdm 显示进度
+                        activity_map = {a.get('activityId'): a for a in activities}
                         with tqdm(total=len(activities), desc="下载活动详情") as pbar:
                             for future in as_completed(future_to_activity):
-                                activity_id, success, error = future.result()
-                                if success:
+                                activity_id, success, error, updated_activity = future.result()
+                                if success and activity_id and activity_id in activity_map:
+                                    activity_map[activity_id].update(updated_activity)
                                     success_count += 1
                                 else:
                                     failed_count += 1

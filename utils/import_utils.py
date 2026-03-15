@@ -8,15 +8,24 @@ import os
 import json
 import logging
 import hashlib
+import sys
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+# 添加项目根目录以导入 segment_utils
+_ref_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _ref_dir not in sys.path:
+    sys.path.insert(0, _ref_dir)
 
-# 清除模块缓存（避免使用旧版本）
-import sys
+try:
+    from utils.segment_utils import parse_garmin_splits, parse_garmin_laps
+except ImportError:
+    parse_garmin_splits = parse_garmin_laps = None
+
+
 if 'data.garmin.db.models' in sys.modules:
     del sys.modules['data.garmin.db.models']
 
@@ -226,19 +235,44 @@ class DataImporter:
                             f"{self.user_id}_garmin_{source_activity_id}".encode("utf-8")
                         ).hexdigest()
                 
-                # 尝试加载分段数据
+                # 尝试加载分段数据并标准化为统一格式
                 splits_file = filepath.replace('_summary.json', '_splits.json').replace('_details.json', '_splits.json')
                 laps_file = filepath.replace('_summary.json', '_laps.json').replace('_details.json', '_laps.json')
                 
-                if os.path.exists(splits_file):
-                    splits_data = self._load_json_file(splits_file)
-                    if splits_data:
-                        activity['splits_data'] = splits_data
-                elif os.path.exists(laps_file):
-                    laps_data = self._load_json_file(laps_file)
-                    if laps_data:
-                        activity['splits_data'] = laps_data
-                
+                segments = None
+                if parse_garmin_splits and parse_garmin_laps:
+                    if os.path.exists(splits_file):
+                        raw_splits = self._load_json_file(splits_file)
+                        if raw_splits:
+                            segments = parse_garmin_splits(raw_splits)
+                    if not segments and os.path.exists(laps_file):
+                        raw_laps = self._load_json_file(laps_file)
+                        if raw_laps:
+                            segments = parse_garmin_laps(raw_laps)
+                else:
+                    if os.path.exists(splits_file):
+                        raw = self._load_json_file(splits_file)
+                        if raw:
+                            activity['splits_data'] = raw
+                    elif os.path.exists(laps_file):
+                        raw = self._load_json_file(laps_file)
+                        if raw:
+                            activity['splits_data'] = raw
+                if segments:
+                    activity['splits_data'] = {'segments': segments, 'source_format': 'garmin'}
+
+                # 尝试从 FIT 文件解析心率时间序列
+                fit_path = os.path.join(os.path.dirname(filepath), f'{activity_id}.fit')
+                if os.path.exists(fit_path):
+                    try:
+                        from utils.fit_parser import parse_heart_rate_samples
+                        hr_samples = parse_heart_rate_samples(fit_path)
+                        if hr_samples:
+                            activity['heart_rate_samples'] = hr_samples
+                            logger.info(f"活动 {activity_id}: 解析到 {len(hr_samples)} 个心率采样")
+                    except Exception as e:
+                        logger.debug(f"活动 {activity_id} 心率解析异常: {e}")
+
                 result = self.db.insert_activity_data(activity)
                 if result is False:
                     # 已存在，跳过
